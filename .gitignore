@@ -2,3 +2,5 @@
 local.env
 production.env
 package-lock.json
+config/local.env
+.env
