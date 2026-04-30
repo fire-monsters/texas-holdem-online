@@ -3,9 +3,15 @@ name: CI Pipeline
 # WHEN to run this pipeline
 on:
   push:
-    branches: [main, master, develop]
+    branches:
+      - main
+      - master
+      - develop
+      - feature/**        # ← covers ALL feature branches including yours
   pull_request:
-    branches: [main, master, develop]
+    branches:
+      - main
+      - master
 
 jobs:
 
