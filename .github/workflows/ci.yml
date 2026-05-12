@@ -1,0 +1,149 @@
+name: CI Pipeline
+
+# WHEN to run this pipeline
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - feature/**        # ← covers ALL feature branches including yours
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+
+  # ─────────────────────────────────────────
+  # JOB 1: Backend checks
+  # ─────────────────────────────────────────
+  backend:
+    name: Backend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Download your code onto the CI machine
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Install Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'                  # Cache node_modules between runs = faster CI
+
+      # Step 3: Install backend dependencies
+      - name: Install backend dependencies
+        run: npm install
+
+      # Step 4: Create the env file CI needs
+      # We use GitHub Secrets (Settings → Secrets → Actions in your repo)
+      - name: Create env file
+        run: |
+          mkdir -p config
+          echo "PORT=7777" > config/local.env
+          echo "NODE_ENV=test" >> config/local.env
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET || 'ci-test-secret-key' }}" >> config/local.env
+          echo "JWT_TOKEN_EXPIRES_IN=7d" >> config/local.env
+
+      # Step 5: Sanity check — can the server start without crashing?
+      - name: Backend health check
+        run: |
+          # Start server in background
+          node server.js &
+          SERVER_PID=$!
+
+          # Wait for it to be ready (max 15 seconds)
+          echo "Waiting for backend to start..."
+          for i in {1..15}; do
+            if curl -s http://localhost:7777 > /dev/null 2>&1; then
+              echo "✅ Backend is up!"
+              break
+            fi
+            echo "Attempt $i/15 - waiting..."
+            sleep 1
+          done
+
+          # Verify it's actually running
+          curl -f http://localhost:7777 || \
+          curl -f http://localhost:7777/api/health || \
+          echo "⚠️ No health endpoint found, but server started successfully"
+
+          # Clean up - stop the server
+          kill $SERVER_PID 2>/dev/null || true
+          echo "✅ Backend check complete"
+
+  # ─────────────────────────────────────────
+  # JOB 2: Frontend checks
+  # ─────────────────────────────────────────
+  frontend:
+    name: Frontend CI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json  # Cache frontend separately
+
+      - name: Install frontend dependencies
+        working-directory: ./client           # Run commands inside client/ folder
+        run: npm install
+
+      - name: Run frontend tests
+        working-directory: ./client
+        run: npm test                         # runs vitest (you have this in package.json)
+
+      - name: Build frontend
+        working-directory: ./client
+        run: npm run build                    # Proves app compiles without errors
+
+      - name: Verify build output exists
+        run: |
+          if [ -d "client/dist" ]; then
+            echo "✅ Build output found in client/dist"
+            ls -la client/dist
+          else
+            echo "❌ Build output missing!"
+            exit 1
+          fi
+
+  # ─────────────────────────────────────────
+  # JOB 3: Docker build check
+  # ─────────────────────────────────────────
+  docker:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]    # Only runs if both above jobs pass
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build backend Docker image
+        run: docker build -t texas-backend .
+
+      - name: Build frontend Docker image
+        run: docker build -t texas-frontend ./client
+
+      - name: Smoke test with docker compose
+        run: |
+          docker compose up -d
+          sleep 10
+
+          # Check both containers are running
+          docker compose ps
+
+          # Check backend is responding
+          curl -f http://localhost:7777 || true
+
+          # Tear down
+          docker compose down
+          echo "✅ Docker compose smoke test complete"

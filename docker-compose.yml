@@ -1,0 +1,32 @@
+
+services:
+
+  # Backend - Node.js/Express (port 7777)
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "7777:7777"
+    environment:
+      - NODE_ENV=development
+      - PORT=7777
+      - JWT_SECRET=demo-secret-key-change-in-production
+    volumes:
+      - .:/app
+      - /app/node_modules    # Protect container's node_modules
+    restart: unless-stopped
+
+  # Frontend - React + Vite (port 3000)
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./client:/app
+      - /app/node_modules    # Protect container's node_modules
+    restart: unless-stopped
